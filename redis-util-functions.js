@@ -14,6 +14,43 @@ class RedisUtilFunctions {
             : false
     }
 
+    open() {
+        if (parseInt(process.env.REDIS_CLUSTER)) {
+            this.redisClient = new Redis.Cluster([process.env.REDIS_CONNECTION])
+        } else {
+            this.redisClient = new Redis(process.env.REDIS_CONNECTION)
+        }
+    }
+
+    rr(redis_method, hkey, ...rest_args) {
+        hkey = this._rpfx(hkey)
+        let cb =
+            rest_args.length > 0 &&
+            typeof rest_args[rest_args.length - 1] === 'function'
+                ? rest_args.pop()
+                : null
+        if (!cb) return this._redis_call(redis_method, hkey, ...rest_args)
+
+        return new Promise(async (resolve, reject) => {
+            let f = (err, result) => {
+                if (err) return reject(err)
+                return resolve(cb(result))
+            }
+            rest_args.push(f)
+            this._redis_call(redis_method, hkey, ...rest_args)
+        })
+    }
+
+    r(redis_method, hkey, ...rest_args) {
+        hkey = this._rpfx(hkey)
+        if (
+            !rest_args.length ||
+            typeof rest_args[rest_args.length - 1] !== 'function'
+        )
+            rest_args.push(function () {})
+        return this._redis_call(redis_method, hkey, ...rest_args)
+    }
+
     rpipemaybe(commands) {
         return commands.length === 1
             ? this.rr(...commands[0])
@@ -110,40 +147,6 @@ class RedisUtilFunctions {
         if (redis_method === 'JSON.ARRINSERT' && rest_args.length >= 4)
             [rest_args[3], rest_args[2]] = [rest_args[2], rest_args[3]]
         return execer.call(redis_method, ...rest_args)
-    }
-
-    r(redis_method, hkey, ...rest_args) {
-        hkey = this._rpfx(hkey)
-        if (
-            !rest_args.length ||
-            typeof rest_args[rest_args.length - 1] !== 'function'
-        )
-            rest_args.push(function () {})
-        return this._redis_call(redis_method, hkey, ...rest_args)
-    }
-
-    rr(redis_method, hkey, ...rest_args) {
-        hkey = this._rpfx(hkey)
-        let cb =
-            rest_args.length > 0 &&
-            typeof rest_args[rest_args.length - 1] === 'function'
-                ? rest_args.pop()
-                : null
-        if (!cb) return this._redis_call(redis_method, hkey, ...rest_args)
-
-        return new Promise(async (resolve, reject) => {
-            let f = (err, result) => {
-                if (err) {
-                    logger.ERROR.error(
-                        logger.lineNumber(new Error(), 2) + ' | ' + err
-                    )
-                    return reject(err)
-                }
-                return resolve(cb(result))
-            }
-            rest_args.push(f)
-            this._redis_call(redis_method, hkey, ...rest_args)
-        })
     }
 
     rhmget(hkey, keys, to_num, cb) {
@@ -259,14 +262,6 @@ class RedisUtilFunctions {
             if (!i || opts.one) break
         }
         return opts.return_cursor ? [i, keys] : keys
-    }
-
-    open() {
-        if (parseInt(process.env.REDIS_CLUSTER)) {
-            this.redisClient = new Redis.Cluster([process.env.REDIS_CONNECTION])
-        } else {
-            this.redisClient = new Redis(process.env.REDIS_CONNECTION)
-        }
     }
 
     async rjget(hkey, path, callback, ...rest_args) {

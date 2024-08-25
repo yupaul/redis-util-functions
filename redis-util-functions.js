@@ -7,19 +7,31 @@ const parseJson = function (s, dflt) {
 }
 
 class RedisUtilFunctions {
-    constructor() {
+    constructor(client_or_settings, is_cluster, prefix) {
         this.redisClient = null
-        this.redisHprefix = process.env.REDIS_HPREFIX
-            ? process.env.REDIS_HPREFIX
-            : false
+        this.open(client_or_settings, is_cluster)
+        this.redisHprefix = prefix || process.env.REDIS_HPREFIX || ''
     }
 
-    open() {
-        if (parseInt(process.env.REDIS_CLUSTER)) {
-            this.redisClient = new Redis.Cluster([process.env.REDIS_CONNECTION])
-        } else {
-            this.redisClient = new Redis(process.env.REDIS_CONNECTION)
+    setCLient(client) {
+        if (client instanceof Redis || client instanceof Redis.Cluster) {
+            this.redisClient = client
+            return true
         }
+        return false
+    }
+
+    open(client_or_settings, is_cluster) {
+        if (client_or_settings && this.setCLient(client_or_settings)) return true
+        if (!client_or_settings && process.env.REDIS_CONNECTION) client_or_settings = process.env.REDIS_CONNECTION
+        if (!client_or_settings) return false
+        if (is_cluster === undefined && Number(process.env.REDIS_CLUSTER)) is_cluster = true
+        if (is_cluster) {
+            this.redisClient = new Redis.Cluster([client_or_settings])
+        } else {
+            this.redisClient = new Redis(client_or_settings)
+        }
+        return true
     }
 
     rr(redis_method, hkey, ...rest_args) {
@@ -96,57 +108,6 @@ class RedisUtilFunctions {
         let ret = await rpipe.exec()
         if (!Array.isArray(ret) || !ret.length) return Promise.resolve(ret)
         return Promise.resolve(ret.map((r) => r[1]))
-    }
-
-    _rexec(rest_args) {
-        if (
-            rest_args &&
-            rest_args[rest_args.length - 1] &&
-            rest_args[rest_args.length - 1].exec
-        )
-            return rest_args.pop()
-        return this.redisClient
-    }
-
-    _redis_call(redis_method, hkey, ...rest_args) {
-        if (redis_method.indexOf('.') !== -1) {
-            rest_args.unshift(hkey)
-            return this._rraw(redis_method, ...rest_args)
-        } else {
-            if (
-                rest_args.length > 0 &&
-                hkey.substring(0, 1) === '{' &&
-                (redis_method === 'del' ||
-                    (redis_method.substring(0, 1) === 'z' &&
-                        redis_method.indexOf('store') !== -1))
-            )
-                rest_args = rest_args.map((rest_arg) =>
-                    typeof rest_arg !== 'string' ||
-                    rest_arg.substring(0, 1) !== '{'
-                        ? rest_arg
-                        : this._rpfx(rest_arg)
-                )
-
-            const execer = this._rexec(rest_args)
-            return execer[redis_method](hkey, ...rest_args)
-        }
-    }
-
-    _rraw(redis_method, ...rest_args) {
-        const execer = this._rexec(rest_args)
-        if (
-            redis_method.indexOf('JSON.') === 0 &&
-            rest_args.length >= 3 &&
-            (rest_args[2] !== null ||
-                redis_method === 'JSON.SET' ||
-                redis_method === 'JSON.ARRINSERT' ||
-                redis_method === 'JSON.ARRAPPEND') &&
-            typeof rest_args[2] !== 'function'
-        )
-            rest_args[2] = JSON.stringify(rest_args[2])
-        if (redis_method === 'JSON.ARRINSERT' && rest_args.length >= 4)
-            [rest_args[3], rest_args[2]] = [rest_args[2], rest_args[3]]
-        return execer.call(redis_method, ...rest_args)
     }
 
     rhmget(hkey, keys, to_num, cb) {
@@ -357,25 +318,6 @@ class RedisUtilFunctions {
             )
     }
 
-    _rjpath(path) {
-        if (!path || path === '$') return '$'
-        if (path.substr(0, 2) !== '$.') return '$.' + path
-        return path
-    }
-
-    _rpfx(hkey) {
-        let _slot_pfx = ''
-        if (hkey.substring(0, 1) === '{') {
-            _slot_pfx = '{'
-            hkey = hkey.substring(1)
-        }
-        return (
-            _slot_pfx +
-            (hkey.indexOf(this.redisHprefix) !== 0 ? this.redisHprefix : '') +
-            hkey
-        )
-    }
-
     async rinzset(rkey, members_to_check) {
         const res = await this.rr('zmscore', rkey, ...members_to_check)
         if (!res || !res.length) return Promise.resolve([])
@@ -424,6 +366,78 @@ class RedisUtilFunctions {
             start = _end + 1
         }
     }
+
+    _redis_call(redis_method, hkey, ...rest_args) {
+        if (redis_method.indexOf('.') !== -1) {
+            rest_args.unshift(hkey)
+            return this._rraw(redis_method, ...rest_args)
+        } else {
+            if (
+                rest_args.length > 0 &&
+                hkey.substring(0, 1) === '{' &&
+                (redis_method === 'del' ||
+                    (redis_method.substring(0, 1) === 'z' &&
+                        redis_method.indexOf('store') !== -1))
+            )
+                rest_args = rest_args.map((rest_arg) =>
+                    typeof rest_arg !== 'string' ||
+                    rest_arg.substring(0, 1) !== '{'
+                        ? rest_arg
+                        : this._rpfx(rest_arg)
+                )
+
+            const execer = this._rexec(rest_args)
+            return execer[redis_method](hkey, ...rest_args)
+        }
+    }
+
+    _rraw(redis_method, ...rest_args) {
+        const execer = this._rexec(rest_args)
+        if (
+            redis_method.indexOf('JSON.') === 0 &&
+            rest_args.length >= 3 &&
+            (rest_args[2] !== null ||
+                redis_method === 'JSON.SET' ||
+                redis_method === 'JSON.ARRINSERT' ||
+                redis_method === 'JSON.ARRAPPEND') &&
+            typeof rest_args[2] !== 'function'
+        )
+            rest_args[2] = JSON.stringify(rest_args[2])
+        if (redis_method === 'JSON.ARRINSERT' && rest_args.length >= 4)
+            [rest_args[3], rest_args[2]] = [rest_args[2], rest_args[3]]
+        return execer.call(redis_method, ...rest_args)
+    }
+
+    _rexec(rest_args) {
+        if (
+            rest_args &&
+            rest_args[rest_args.length - 1] &&
+            rest_args[rest_args.length - 1].exec
+        )
+            return rest_args.pop()
+        return this.redisClient
+    }
+
+    _rjpath(path) {
+        if (!path || path === '$') return '$'
+        if (path.substr(0, 2) !== '$.') return '$.' + path
+        return path
+    }
+
+    _rpfx(hkey) {
+        let _slot_pfx = ''
+        if (hkey.substring(0, 1) === '{') {
+            _slot_pfx = '{'
+            hkey = hkey.substring(1)
+        }
+        return (
+            _slot_pfx +
+            (hkey.indexOf(this.redisHprefix) !== 0 ? this.redisHprefix : '') +
+            hkey
+        )
+    }
+
+
 }
 
 module.exports = new RedisUtilFunctions()

@@ -1,17 +1,12 @@
 const Redis = require('ioredis')
 
-const parseJson = (s, dflt) => {
-    let out
-    try {
-        out = JSON.parse(s)
-    } catch (_exc) {
-        out = dflt
-    }
-    return out
+const parseJson = function (s, dflt) {
+    if (typeof s === 'string') return JSON.parse(s)
+    if (['number', 'boolean'].includes(typeof s) || s === null) return s
+    return dflt
 }
 
 class RedisUtilFunctions {
-	
     constructor() {
         this.redisClient = null
         this.redisHprefix = process.env.REDIS_HPREFIX

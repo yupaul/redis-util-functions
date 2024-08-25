@@ -22,10 +22,13 @@ class RedisUtilFunctions {
     }
 
     open(client_or_settings, is_cluster) {
-        if (client_or_settings && this.setCLient(client_or_settings)) return true
-        if (!client_or_settings && process.env.REDIS_CONNECTION) client_or_settings = process.env.REDIS_CONNECTION
+        if (client_or_settings && this.setCLient(client_or_settings))
+            return true
+        if (!client_or_settings && process.env.REDIS_CONNECTION)
+            client_or_settings = process.env.REDIS_CONNECTION
         if (!client_or_settings) return false
-        if (is_cluster === undefined && Number(process.env.REDIS_CLUSTER)) is_cluster = true
+        if (is_cluster === undefined && Number(process.env.REDIS_CLUSTER))
+            is_cluster = true
         if (is_cluster) {
             this.redisClient = new Redis.Cluster([client_or_settings])
         } else {
@@ -436,8 +439,6 @@ class RedisUtilFunctions {
             hkey
         )
     }
-
-
 }
 
 module.exports = new RedisUtilFunctions()

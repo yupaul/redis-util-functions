@@ -1,5 +1,13 @@
 const Redis = require('ioredis')
 
+/**
+ * Returns JSON-parsed input string `s` if it is a string,
+ * or the value of `s` itself if it is a number, boolean, or null,
+ * or the value of `dflt` if none of the above.
+ * @param {string|number|boolean|null} s - the input string to parse
+ * @param {*} dflt - the default value to return if the input is not a string
+ * @returns {Object} the parsed JSON object
+ */
 const parseJson = function (s, dflt) {
     if (typeof s === 'string') return JSON.parse(s)
     if (['number', 'boolean'].includes(typeof s) || s === null) return s
@@ -7,12 +15,22 @@ const parseJson = function (s, dflt) {
 }
 
 class RedisUtilFunctions {
+    /**
+     * @param {Redis|Redis.Cluster|Object|string} [client_or_settings] - the Redis client, or settings object, or string connection string
+     * @param {boolean} [is_cluster] - whether the Redis server is a cluster
+     * @param {string} [prefix] - the string prefix to prepend to every Redis key
+     */
     constructor(client_or_settings, is_cluster, prefix) {
         this.redisClient = null
         this.open(client_or_settings, is_cluster)
         this.redisHprefix = prefix || process.env.REDIS_HPREFIX || ''
     }
 
+    /**
+     * Sets the Redis client instance.
+     * @param {Redis|Redis.Cluster} client - the Redis client instance
+     * @returns {boolean} true if the client is set successfully, false otherwise
+     */
     setCLient(client) {
         if (client instanceof Redis || client instanceof Redis.Cluster) {
             this.redisClient = client
@@ -21,6 +39,13 @@ class RedisUtilFunctions {
         return false
     }
 
+    /**
+     * Opens a connection to the Redis server.
+     * If the connection is not opened already, it opens a new connection to the Redis server.
+     * @param {Redis|Redis.Cluster|Object|string} [client_or_settings] - the Redis client, or settings object, or string connection string
+     * @param {boolean} [is_cluster] - whether the Redis server is a cluster
+     * @returns {boolean} true if the connection is opened successfully, false otherwise
+     */
     open(client_or_settings, is_cluster) {
         if (client_or_settings && this.setCLient(client_or_settings))
             return true
@@ -37,6 +62,18 @@ class RedisUtilFunctions {
         return true
     }
 
+    /**
+     * Async Calls a Redis method, prefixing the key with the stored prefix.
+     * If the last argument is a function, it is treated as a callback.
+     * If the callback is given, the function returns a Promise,
+     * and the callback is called with the result of the Redis call inside the Promise.
+     * @see {@link r} for the Sync version
+     * @async
+     * @param {string} redis_method - the Redis method to call
+     * @param {string} hkey - the Redis key to use
+     * @param {...*} rest_args - the arguments to pass to the Redis method
+     * @returns {Promise|*} the result of the Redis method, or a Promise resolved with the result
+     */
     rr(redis_method, hkey, ...rest_args) {
         hkey = this._rpfx(hkey)
         let cb =
@@ -56,6 +93,15 @@ class RedisUtilFunctions {
         })
     }
 
+    /**
+     * Sync Calls a Redis method, prefixing the key with the stored prefix.
+     * If the last argument is not a function, it appends an empty function to the arguments.
+     * @see {@link rr} for the Async version
+     * @param {string} redis_method - the Redis method to call
+     * @param {string} hkey - the Redis key to use
+     * @param {...*} rest_args - the arguments to pass to the Redis method
+     * @returns {*} the result of the Redis method
+     */
     r(redis_method, hkey, ...rest_args) {
         hkey = this._rpfx(hkey)
         if (
@@ -66,15 +112,31 @@ class RedisUtilFunctions {
         return this._redis_call(redis_method, hkey, ...rest_args)
     }
 
+    /**
+     * If the given commands array contains only one command, call rr() on it.
+     * Otherwise, call rpipemulti() on the commands array.
+     * @see {@link rr}
+     * @see {@link rpipemulti}
+     * @async
+     * @param {Array} commands - the commands array to process
+     * @returns {Promise|*} the result of the Redis method, or a Promise resolved with the result
+     */
     rpipemaybe(commands) {
         return commands.length === 1
             ? this.rr(...commands[0])
             : this.rpipemulti(commands)
     }
 
+    /**
+     * Calls multiple Redis methods in a pipeline or a transaction,
+     * prefixing the key with the stored prefix.
+     * @async
+     * @param {Array} commands - the commands array to process
+     * @param {string|function} [arg2] - 't' for transaction, or a callback function to call with the results
+     * @param {function} [cb] - callback function to call with the results
+     * @returns {Promise|*} the result of the Redis method, or a Promise resolved with the result
+     */
     rpipemulti(commands, arg2, cb) {
-        //arg2 - 't' for transaction, function for callback
-        //let dt = Date.now() //-tmp
         let type = 'pipeline'
         if (arg2) {
             if (typeof arg2 === 'function') {
@@ -99,6 +161,14 @@ class RedisUtilFunctions {
         return ret
     }
 
+    /**
+     * Calls multiple Redis methods in a pipeline, prefixing the key with the stored prefix.
+     * Returns a Promise resolved with an array of results, where each result is the result of the corresponding Redis method.
+     * @see {@link rpipemulti}
+     * @async
+     * @param {Array} commands - the commands array to process
+     * @returns {Promise<Array>} the result of the Redis method, or a Promise resolved with the result
+     */
     async rpipemulti2array(commands) {
         let rpipe = this.redisClient.pipeline()
         for (let i = 0; i < commands.length; ++i) {
@@ -113,6 +183,18 @@ class RedisUtilFunctions {
         return Promise.resolve(ret.map((r) => r[1]))
     }
 
+    /**
+     * Calls Redis HMGET method, prefixing the key with the stored prefix.
+     * If a callback function is provided, it is called with the result of the Redis method,
+     * and the result of the callback function is returned as the Promise result.
+     * If to_num is true, the result is parsed to number.
+     * @async
+     * @param {string} hkey - the key to access
+     * @param {Array<string>} keys - the keys to retrieve
+     * @param {boolean} [to_num=false] - whether to parse the result to number
+     * @param {function} [cb] - the callback function to call with the result
+     * @returns {Promise<Object>} the result of the Redis method, or a Promise resolved with the result
+     */
     rhmget(hkey, keys, to_num, cb) {
         if (cb && typeof cb !== 'function') cb = null
         return this.rr('hmget', hkey, keys, (res) => {
@@ -124,10 +206,25 @@ class RedisUtilFunctions {
         })
     }
 
+    /**
+     * Calls Redis RENAME method, prefixing the key with the stored prefix.
+     * @async
+     * @param {string} from - the key to rename
+     * @param {string} to - the new key name
+     * @returns {Promise<string>} the result of the Redis method, or a Promise resolved with the result
+     */
     rrename(from, to) {
         return this._redis_call('rename', this._rpfx(from), this._rpfx(to))
     }
 
+    /**
+     * Deletes all keys from the given set, using either SPop or ZPopMin depending on the set type.
+     * If a pattern is given, it is used to construct the key names to delete.     *
+     * @param {string} keys_set - the set key name
+     * @param {boolean} is_sorted - whether the set is sorted
+     * @param {string} [ptn] - the pattern to use for constructing key names
+     * @returns {Promise<void>} the result of the Redis method, or a Promise resolved with the result
+     */
     async rdel_from_set(keys_set, is_sorted, ptn) {
         let _keys
         const command = is_sorted ? 'zpopmin' : 'spop'
@@ -144,6 +241,16 @@ class RedisUtilFunctions {
         }
     }
 
+    /**
+     * Deletes keys or hash keys matching the given patterns.
+     * If a pattern contains '.', it is assumed to be a hash key name.
+     * If a pattern does not contain '*', it is used directly.
+     * If a pattern contains '*', it is scanned for using the `SCAN` command.
+     * @see {@link rscan}
+     * @async
+     * @param {string|string[]} ptns - the patterns to match
+     * @returns {Promise<boolean>} the result of the Redis method, or a Promise resolved with the result
+     */
     async rdel(ptns) {
         if (!Array.isArray(ptns)) ptns = [ptns]
         let commands = []
@@ -171,6 +278,24 @@ class RedisUtilFunctions {
         return Promise.resolve(true)
     }
 
+    /**
+     * Scans for keys or hash keys matching the given pattern.
+     * If a pattern contains '.', it is assumed to be a hash key name.
+     * If a pattern does not contain '*', it is used directly.
+     * If a pattern contains '*', it is scanned for using the `SCAN` command.
+     * @async
+     * @param {string|string[]} ptn - the pattern to match
+     * @param {function} [cb] - the callback to call with the matching keys
+     * @param {string} [hkey] - the hash key to scan, if different from the key name
+     * @param {object} [opts] - additional options
+     * @param {boolean} [opts.return] - whether to return the keys in an array, or the return value of the callback
+     * @param {boolean} [opts.return_cursor] - whether to return the final cursor value
+     * @param {boolean} [opts.one] - whether to stop after finding one matching key
+     * @param {number} [opts.cursor] - the initial cursor value
+     * @param {boolean} [opts.cb_all] - whether to call the callback with the entire array of matching keys
+     * @param {number} [opts.count] - the number of keys to return each iteration
+     * @returns {Promise<string|string[]>} the result of the Redis method, or a Promise resolved with the result
+     */
     async rscan(ptn, cb, hkey, opts) {
         //opts: return, return_cursor, one, cursor, cb_all, count
         if (!opts) opts = {}
@@ -228,9 +353,22 @@ class RedisUtilFunctions {
         return opts.return_cursor ? [i, keys] : keys
     }
 
+    /**
+     * Retrieves a value from a Redis JSON key.
+     * If key doesn't exists, returns null.
+     * If key exists, but path doesn't - returns []
+     * If a callback function is provided, it is called with the result of the Redis method,
+     * and the result of the callback function is returned as the Promise result.
+     * If empty_array_null is true, and the result is an empty array, returns null
+     * If keep_array is false, and the result is an array with one element, returns that element
+     * @async
+     * @param {string} hkey - the key to access
+     * @param {string} path - the path to the value to retrieve
+     * @param {function} [callback] - the callback function to call with the result
+     * @param {...string|function} [rest_args] - additional arguments to pass to the callback, or function to call with the key and path
+     * @returns {Promise<Object>} the result of the Redis method, or a Promise resolved with the result
+     */
     async rjget(hkey, path, callback, ...rest_args) {
-        // if key doesn't exists return null
-        // if key exists, but path doesn't - returns []
         path = this._rjpath(path)
         hkey = this._rpfx(hkey)
         let res = await this._rraw('JSON.GET', hkey, path)
@@ -265,9 +403,7 @@ class RedisUtilFunctions {
 
         let ret
         const _type = typeof rest_args[0]
-        if (_type === 'string') {
-            ret = this.qry(...rest_args)
-        } else if (_type === 'function') {
+        if (_type === 'function') {
             ret = rest_args[0](hkey, path)
         } else {
             return Promise.resolve(null)
@@ -280,47 +416,15 @@ class RedisUtilFunctions {
         }
     }
 
-    async rjset(hkey, path, data, ...rest_args) {
-        //hkey path [db_query] [db_query_params, Array or function] [callback]
-        const db_args =
-            rest_args.length && typeof rest_args[0] === 'string'
-                ? rest_args.splice(0, 2)
-                : false
-        path = this._rjpath(path)
-        if (db_args) {
-            await this.rr('JSON.SET', hkey, path, data, ...rest_args)
-            return this.qry(
-                db_args[0],
-                db_args.length > 1
-                    ? typeof db_args[1] === 'function'
-                        ? db_args[1](data)
-                        : db_args[1]
-                    : data
-            )
-        } else {
-            return this.rr('JSON.SET', hkey, path, data, ...rest_args)
-        }
-    }
-
-    rjset_sync(hkey, path, data, ...rest_args) {
-        //hkey path [db_query] [db_query_params, Array or function] [callback]
-        const db_args =
-            rest_args.length && typeof rest_args[0] === 'string'
-                ? rest_args.splice(0, 2)
-                : false
-        path = this._rjpath(path)
-        this.r('JSON.SET', hkey, path, data, ...rest_args)
-        if (db_args)
-            this.pool.query(
-                db_args[0],
-                db_args.length > 1
-                    ? typeof db_args[1] === 'function'
-                        ? db_args[1](data)
-                        : db_args[1]
-                    : data
-            )
-    }
-
+    /**
+     * Retrieves an array of members from a Redis ZSET key.
+     * Only members that have a score are included in the result.
+     * If key doesn't exists, returns []
+     * @async
+     * @param {string} rkey - the key to access
+     * @param {Array<string>} members_to_check - the members to check
+     * @returns {Promise<Array<string>>} the result of the Redis method, or a Promise resolved with the result
+     */
     async rinzset(rkey, members_to_check) {
         const res = await this.rr('zmscore', rkey, ...members_to_check)
         if (!res || !res.length) return Promise.resolve([])
@@ -331,6 +435,15 @@ class RedisUtilFunctions {
         return Promise.resolve(out)
     }
 
+    /**
+     * Copies all members from a Redis ZSET key to a Redis SET key.
+     * The copy is done in chunks using the ZSCAN method, so it won't block Redis
+     * for long periods of time.
+     * @async
+     * @param {string} source_key - the ZSET key to copy from
+     * @param {string} target_key - the SET key to copy to
+     * @returns {Promise<void>} the result of the Redis method, or a Promise resolved with the result
+     */
     async zset2set_scan(source_key, target_key) {
         //slow
         let cursor = '0'
@@ -346,6 +459,19 @@ class RedisUtilFunctions {
         } while (cursor !== '0')
     }
 
+    /**
+     * Copies all members from a Redis ZSET key to a Redis SET or LIST key.
+     * The copy is done in chunks using the ZRANGE method, so it won't block Redis
+     * for long periods of time.
+     * @async
+     * @param {string} source_key - the ZSET key to copy from
+     * @param {string} target_key - the LIST or SET key to copy to
+     * @param {string} [command='sadd'] - the Redis command to use to add the members to the
+     * target key, lpush for LIST, sadd for SET
+     * @param {number} [limit=1000] - the number of members to copy at once
+     * @param {boolean} [with_scores=false] - if true, every member is converted to a string with a comma separating the member value and its score
+     * @returns {Promise<void>} the result of the Redis method, or a Promise resolved with the result
+     */
     async zset_convert(source_key, target_key, command, limit, with_scores) {
         //command: to list - lpush, to set - sadd
         if (!command || command !== 'lpush') command = 'sadd'

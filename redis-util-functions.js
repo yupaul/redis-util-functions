@@ -31,7 +31,7 @@ class RedisUtilFunctions {
      * @param {Redis|Redis.Cluster} client - the Redis client instance
      * @returns {boolean} true if the client is set successfully, false otherwise
      */
-    setCLient(client) {
+    setClient(client) {
         if (client instanceof Redis || client instanceof Redis.Cluster) {
             this.redisClient = client
             return true
@@ -47,7 +47,7 @@ class RedisUtilFunctions {
      * @returns {boolean} true if the connection is opened successfully, false otherwise
      */
     open(client_or_settings, is_cluster) {
-        if (client_or_settings && this.setCLient(client_or_settings))
+        if (client_or_settings && this.setClient(client_or_settings))
             return true
         if (!client_or_settings && process.env.REDIS_CONNECTION)
             client_or_settings = process.env.REDIS_CONNECTION
